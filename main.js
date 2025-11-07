@@ -20,6 +20,8 @@ class BackgroundRemovalApp {
         this.downloadBtn = document.getElementById('downloadBtn');
         this.retakeBtn = document.getElementById('retakeBtn');
         this.retryBtn = document.getElementById('retryBtn');
+        this.applyInstructionBtn = document.getElementById('applyInstructionBtn');
+        this.instructionInput = document.getElementById('instructionInput');
 
         this.loadingState = document.getElementById('loadingState');
         this.resultContainer = document.getElementById('resultContainer');
@@ -35,6 +37,10 @@ class BackgroundRemovalApp {
         this.downloadBtn.addEventListener('click', () => this.downloadImage());
         this.retakeBtn.addEventListener('click', () => this.retake());
         this.retryBtn.addEventListener('click', () => this.hideError());
+        this.applyInstructionBtn.addEventListener('click', () => this.applyInstructions());
+        this.instructionInput.addEventListener('input', () => {
+            this.applyInstructionBtn.disabled = !this.instructionInput.value.trim();
+        });
     }
 
     async startCamera() {
@@ -55,33 +61,30 @@ class BackgroundRemovalApp {
             this.stream.getTracks().forEach(track => track.stop());
         }
 
-        const constraints = {
-            video: {
-                facingMode: facingMode,
-                width: { ideal: 1920 },
-                height: { ideal: 1080 }
-            },
-            audio: false
-        };
-
+        // Try with facingMode first
         try {
+            const constraints = {
+                video: {
+                    facingMode: { ideal: facingMode }
+                },
+                audio: false
+            };
             this.stream = await navigator.mediaDevices.getUserMedia(constraints);
             this.video.srcObject = this.stream;
-            await this.video.play();
+            return;
         } catch (error) {
-            // If environment camera fails, try user camera
-            if (facingMode === 'environment') {
-                const fallbackConstraints = {
-                    video: { facingMode: 'user' },
-                    audio: false
-                };
-                this.stream = await navigator.mediaDevices.getUserMedia(fallbackConstraints);
-                this.video.srcObject = this.stream;
-                await this.video.play();
-                this.currentFacingMode = 'user';
-            } else {
-                throw error;
-            }
+            console.log('Failed with facingMode, trying simple constraints:', error);
+        }
+
+        // Fallback: Try with just video: true
+        try {
+            const simpleConstraints = { video: true, audio: false };
+            this.stream = await navigator.mediaDevices.getUserMedia(simpleConstraints);
+            this.video.srcObject = this.stream;
+            return;
+        } catch (error) {
+            console.error('All camera initialization attempts failed:', error);
+            throw new Error('Unable to access camera. Please check permissions and ensure you are using HTTPS or localhost.');
         }
     }
 
@@ -178,10 +181,31 @@ class BackgroundRemovalApp {
         this.loadingState.style.display = 'none';
         this.resultContainer.style.display = 'block';
 
+        // Auto-save to Downloads folder
+        this.autoSaveImage(blob);
+
         // Clean up old URLs
         this.resultImage.onload = () => {
             URL.revokeObjectURL(url);
         };
+    }
+
+    autoSaveImage(blob) {
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `product-shot-${Date.now()}.png`;
+        a.style.display = 'none';
+        document.body.appendChild(a);
+        a.click();
+
+        // Clean up after a short delay
+        setTimeout(() => {
+            document.body.removeChild(a);
+            URL.revokeObjectURL(url);
+        }, 100);
+
+        console.log('Image auto-saved to Downloads folder');
     }
 
     downloadImage() {
@@ -217,6 +241,175 @@ class BackgroundRemovalApp {
 
     hideError() {
         this.errorState.style.display = 'none';
+    }
+
+    async applyInstructions() {
+        const instructions = this.instructionInput.value.trim().toLowerCase();
+
+        if (!this.processedImageBlob || !instructions) {
+            return;
+        }
+
+        this.showLoading();
+
+        try {
+            // Create image from current processed blob
+            const img = new Image();
+            const url = URL.createObjectURL(this.processedImageBlob);
+
+            img.onload = async () => {
+                const canvas = document.createElement('canvas');
+                canvas.width = img.width;
+                canvas.height = img.height;
+                const ctx = canvas.getContext('2d');
+
+                // Apply modifications based on instructions
+                await this.processInstructions(ctx, img, instructions);
+
+                // Convert to blob and display
+                canvas.toBlob((modifiedBlob) => {
+                    this.processedImageBlob = modifiedBlob;
+                    this.displayResult(modifiedBlob);
+                    URL.revokeObjectURL(url);
+                    this.instructionInput.value = '';
+                    this.applyInstructionBtn.disabled = true;
+                }, 'image/png');
+            };
+
+            img.onerror = () => {
+                URL.revokeObjectURL(url);
+                this.showError('Failed to apply instructions');
+            };
+
+            img.src = url;
+
+        } catch (error) {
+            console.error('Error applying instructions:', error);
+            this.showError('Failed to apply instructions: ' + error.message);
+        }
+    }
+
+    async processInstructions(ctx, img, instructions) {
+        // Draw base image
+        ctx.drawImage(img, 0, 0);
+
+        // Parse and apply various instruction types
+        if (instructions.includes('bright') || instructions.includes('lighter')) {
+            this.adjustBrightness(ctx, 1.2);
+        }
+
+        if (instructions.includes('dark') || instructions.includes('dim')) {
+            this.adjustBrightness(ctx, 0.8);
+        }
+
+        if (instructions.includes('contrast')) {
+            this.adjustContrast(ctx);
+        }
+
+        if (instructions.includes('blur')) {
+            ctx.filter = 'blur(2px)';
+            ctx.drawImage(ctx.canvas, 0, 0);
+            ctx.filter = 'none';
+        }
+
+        if (instructions.includes('sharpen')) {
+            ctx.filter = 'contrast(1.2) saturate(1.1)';
+            ctx.drawImage(ctx.canvas, 0, 0);
+            ctx.filter = 'none';
+        }
+
+        if (instructions.includes('grayscale') || instructions.includes('black and white')) {
+            ctx.filter = 'grayscale(100%)';
+            ctx.drawImage(ctx.canvas, 0, 0);
+            ctx.filter = 'none';
+        }
+
+        if (instructions.includes('sepia')) {
+            ctx.filter = 'sepia(100%)';
+            ctx.drawImage(ctx.canvas, 0, 0);
+            ctx.filter = 'none';
+        }
+
+        if (instructions.includes('shadow')) {
+            this.addShadow(ctx, img);
+        }
+
+        if (instructions.includes('border')) {
+            this.addBorder(ctx);
+        }
+
+        // Size adjustments
+        if (instructions.includes('crop') && instructions.includes('square')) {
+            this.cropToSquare(ctx, img);
+        }
+    }
+
+    adjustBrightness(ctx, factor) {
+        const imageData = ctx.getImageData(0, 0, ctx.canvas.width, ctx.canvas.height);
+        const data = imageData.data;
+
+        for (let i = 0; i < data.length; i += 4) {
+            data[i] = Math.min(255, data[i] * factor);     // R
+            data[i + 1] = Math.min(255, data[i + 1] * factor); // G
+            data[i + 2] = Math.min(255, data[i + 2] * factor); // B
+        }
+
+        ctx.putImageData(imageData, 0, 0);
+    }
+
+    adjustContrast(ctx) {
+        const imageData = ctx.getImageData(0, 0, ctx.canvas.width, ctx.canvas.height);
+        const data = imageData.data;
+        const factor = 1.3;
+        const intercept = 128 * (1 - factor);
+
+        for (let i = 0; i < data.length; i += 4) {
+            data[i] = Math.max(0, Math.min(255, data[i] * factor + intercept));
+            data[i + 1] = Math.max(0, Math.min(255, data[i + 1] * factor + intercept));
+            data[i + 2] = Math.max(0, Math.min(255, data[i + 2] * factor + intercept));
+        }
+
+        ctx.putImageData(imageData, 0, 0);
+    }
+
+    addShadow(ctx, img) {
+        // Create shadow effect
+        ctx.clearRect(0, 0, ctx.canvas.width, ctx.canvas.height);
+        ctx.fillStyle = '#FFFFFF';
+        ctx.fillRect(0, 0, ctx.canvas.width, ctx.canvas.height);
+
+        // Draw shadow
+        ctx.shadowColor = 'rgba(0, 0, 0, 0.3)';
+        ctx.shadowBlur = 20;
+        ctx.shadowOffsetX = 5;
+        ctx.shadowOffsetY = 5;
+
+        // Draw image with shadow
+        ctx.drawImage(img, 0, 0);
+
+        // Reset shadow
+        ctx.shadowColor = 'transparent';
+        ctx.shadowBlur = 0;
+        ctx.shadowOffsetX = 0;
+        ctx.shadowOffsetY = 0;
+    }
+
+    addBorder(ctx) {
+        ctx.strokeStyle = '#333333';
+        ctx.lineWidth = 10;
+        ctx.strokeRect(5, 5, ctx.canvas.width - 10, ctx.canvas.height - 10);
+    }
+
+    cropToSquare(ctx, img) {
+        const size = Math.min(img.width, img.height);
+        const x = (img.width - size) / 2;
+        const y = (img.height - size) / 2;
+
+        ctx.canvas.width = size;
+        ctx.canvas.height = size;
+        ctx.fillStyle = '#FFFFFF';
+        ctx.fillRect(0, 0, size, size);
+        ctx.drawImage(img, x, y, size, size, 0, 0, size, size);
     }
 }
 
