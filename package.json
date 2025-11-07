@@ -1,0 +1,23 @@
+{
+  "name": "bgremovalnano",
+  "version": "1.0.0",
+  "description": "Lightweight web app for camera-based background removal with white background for product shots",
+  "main": "main.js",
+  "type": "module",
+  "scripts": {
+    "start": "python3 -m http.server 8000",
+    "dev": "python3 -m http.server 8000"
+  },
+  "keywords": [
+    "background-removal",
+    "camera",
+    "product-photography",
+    "image-processing",
+    "web-app"
+  ],
+  "author": "",
+  "license": "MIT",
+  "dependencies": {
+    "@imgly/background-removal": "^1.4.5"
+  }
+}

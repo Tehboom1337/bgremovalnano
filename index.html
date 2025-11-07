@@ -1,0 +1,84 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>BG Removal Nano - Product Shot Generator</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>📸 BG Removal Nano</h1>
+            <p class="subtitle">Create professional product shots with white background</p>
+        </header>
+
+        <div class="main-content">
+            <!-- Camera Section -->
+            <div class="camera-section">
+                <div class="video-container">
+                    <video id="video" autoplay playsinline></video>
+                    <canvas id="canvas" style="display: none;"></canvas>
+                </div>
+
+                <div class="controls">
+                    <button id="startCamera" class="btn btn-primary">
+                        <span class="icon">📷</span> Start Camera
+                    </button>
+                    <button id="captureBtn" class="btn btn-secondary" disabled>
+                        <span class="icon">📸</span> Capture Photo
+                    </button>
+                    <button id="switchCamera" class="btn btn-secondary" disabled>
+                        <span class="icon">🔄</span> Switch Camera
+                    </button>
+                </div>
+
+                <div class="instructions">
+                    <p><strong>Instructions:</strong></p>
+                    <ul>
+                        <li>Click "Start Camera" to begin</li>
+                        <li>Position your product in the frame</li>
+                        <li>Ensure good lighting for best results</li>
+                        <li>Click "Capture Photo" when ready</li>
+                        <li>Wait for AI to remove the background</li>
+                    </ul>
+                </div>
+            </div>
+
+            <!-- Result Section -->
+            <div class="result-section">
+                <div id="loadingState" class="loading-state" style="display: none;">
+                    <div class="spinner"></div>
+                    <p>Processing image... This may take a few seconds</p>
+                </div>
+
+                <div id="resultContainer" class="result-container" style="display: none;">
+                    <h3>Result</h3>
+                    <div class="result-image-container">
+                        <img id="resultImage" alt="Processed image">
+                    </div>
+                    <div class="result-actions">
+                        <button id="downloadBtn" class="btn btn-success">
+                            <span class="icon">⬇️</span> Download Image
+                        </button>
+                        <button id="retakeBtn" class="btn btn-secondary">
+                            <span class="icon">↩️</span> Take Another
+                        </button>
+                    </div>
+                </div>
+
+                <div id="errorState" class="error-state" style="display: none;">
+                    <p class="error-message"></p>
+                    <button id="retryBtn" class="btn btn-secondary">Try Again</button>
+                </div>
+            </div>
+        </div>
+
+        <footer>
+            <p>Powered by AI-based background removal</p>
+        </footer>
+    </div>
+
+    <script type="module" src="main.js"></script>
+</body>
+</html>
