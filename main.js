@@ -1,167 +1,275 @@
 import { removeBackground } from 'https://cdn.jsdelivr.net/npm/@imgly/background-removal@1.4.5/+esm';
 
-class BackgroundRemovalApp {
+class SimpleBackgroundRemover {
     constructor() {
-        this.video = document.getElementById('video');
-        this.canvas = document.getElementById('canvas');
-        this.ctx = this.canvas.getContext('2d');
+        this.originalImageBlob = null;
+        this.processedImageBlob = null;
         this.stream = null;
         this.currentFacingMode = 'environment';
-        this.processedImageBlob = null;
 
         this.initializeElements();
         this.attachEventListeners();
+        this.setActiveStep(1);
     }
 
     initializeElements() {
-        this.startCameraBtn = document.getElementById('startCamera');
+        // Sections
+        this.methodSelection = document.getElementById('methodSelection');
+        this.uploadSection = document.getElementById('uploadSection');
+        this.cameraSection = document.getElementById('cameraSection');
+        this.loadingSection = document.getElementById('loadingSection');
+        this.resultSection = document.getElementById('resultSection');
+        this.errorSection = document.getElementById('errorSection');
+
+        // Buttons
+        this.useFileBtn = document.getElementById('useFileBtn');
+        this.useCameraBtn = document.getElementById('useCameraBtn');
+        this.backToMethodBtn = document.getElementById('backToMethodBtn');
+        this.backToMethodBtn2 = document.getElementById('backToMethodBtn2');
         this.captureBtn = document.getElementById('captureBtn');
-        this.switchCameraBtn = document.getElementById('switchCamera');
+        this.switchCamera = document.getElementById('switchCamera');
         this.downloadBtn = document.getElementById('downloadBtn');
-        this.retakeBtn = document.getElementById('retakeBtn');
+        this.startOverBtn = document.getElementById('startOverBtn');
         this.retryBtn = document.getElementById('retryBtn');
         this.applyInstructionBtn = document.getElementById('applyInstructionBtn');
+
+        // Input elements
+        this.fileInput = document.getElementById('fileInput');
+        this.uploadArea = document.getElementById('uploadArea');
         this.instructionInput = document.getElementById('instructionInput');
 
-        this.loadingState = document.getElementById('loadingState');
-        this.resultContainer = document.getElementById('resultContainer');
-        this.errorState = document.getElementById('errorState');
-        this.resultImage = document.getElementById('resultImage');
-        this.errorMessage = document.querySelector('.error-message');
+        // Media elements
+        this.video = document.getElementById('video');
+        this.canvas = document.getElementById('canvas');
+        this.ctx = this.canvas.getContext('2d');
+
+        // Result elements
+        this.beforeImage = document.getElementById('beforeImage');
+        this.afterImage = document.getElementById('afterImage');
+        this.errorMessage = document.getElementById('errorMessage');
+
+        // Quick edit buttons
+        this.quickEditBtns = document.querySelectorAll('.quick-edit-btn');
     }
 
     attachEventListeners() {
-        this.startCameraBtn.addEventListener('click', () => this.startCamera());
+        // Method selection
+        this.useFileBtn.addEventListener('click', () => this.showUploadSection());
+        this.useCameraBtn.addEventListener('click', () => this.showCameraSection());
+        this.backToMethodBtn.addEventListener('click', () => this.backToMethodSelection());
+        this.backToMethodBtn2.addEventListener('click', () => this.backToMethodSelection());
+
+        // File upload
+        this.uploadArea.addEventListener('click', () => this.fileInput.click());
+        this.fileInput.addEventListener('change', (e) => this.handleFileSelect(e));
+
+        // Drag and drop
+        this.uploadArea.addEventListener('dragover', (e) => this.handleDragOver(e));
+        this.uploadArea.addEventListener('dragleave', (e) => this.handleDragLeave(e));
+        this.uploadArea.addEventListener('drop', (e) => this.handleDrop(e));
+
+        // Camera
         this.captureBtn.addEventListener('click', () => this.capturePhoto());
-        this.switchCameraBtn.addEventListener('click', () => this.switchCamera());
+        this.switchCamera.addEventListener('click', () => this.switchCameraFacing());
+
+        // Result actions
         this.downloadBtn.addEventListener('click', () => this.downloadImage());
-        this.retakeBtn.addEventListener('click', () => this.retake());
-        this.retryBtn.addEventListener('click', () => this.hideError());
-        this.applyInstructionBtn.addEventListener('click', () => this.applyInstructions());
-        this.instructionInput.addEventListener('input', () => {
-            this.applyInstructionBtn.disabled = !this.instructionInput.value.trim();
+        this.startOverBtn.addEventListener('click', () => this.startOver());
+        this.retryBtn.addEventListener('click', () => this.startOver());
+
+        // Quick edits
+        this.quickEditBtns.forEach(btn => {
+            btn.addEventListener('click', () => this.applyQuickEdit(btn.dataset.action));
         });
+
+        // Custom instructions
+        this.applyInstructionBtn.addEventListener('click', () => this.applyCustomInstructions());
     }
 
-    async startCamera() {
-        try {
-            await this.initializeCamera(this.currentFacingMode);
-            this.startCameraBtn.textContent = '✓ Camera Active';
-            this.startCameraBtn.disabled = true;
-            this.captureBtn.disabled = false;
-            this.switchCameraBtn.disabled = false;
-        } catch (error) {
-            this.showError('Camera access denied or not available: ' + error.message);
+    setActiveStep(stepNumber) {
+        for (let i = 1; i <= 4; i++) {
+            const step = document.getElementById(`step${i}`);
+            if (i === stepNumber) {
+                step.classList.add('active');
+            } else {
+                step.classList.remove('active');
+            }
         }
     }
 
-    async initializeCamera(facingMode) {
-        // Stop existing stream if any
+    showSection(section) {
+        [this.methodSelection, this.uploadSection, this.cameraSection,
+         this.loadingSection, this.resultSection, this.errorSection].forEach(s => {
+            s.style.display = 'none';
+        });
+        section.style.display = 'block';
+    }
+
+    showUploadSection() {
+        this.setActiveStep(2);
+        this.showSection(this.uploadSection);
+    }
+
+    async showCameraSection() {
+        try {
+            this.setActiveStep(2);
+            this.showSection(this.cameraSection);
+            await this.initializeCamera();
+        } catch (error) {
+            this.showError('Could not access camera. Please try uploading a file instead.');
+        }
+    }
+
+    backToMethodSelection() {
+        this.setActiveStep(1);
+        this.showSection(this.methodSelection);
+        if (this.stream) {
+            this.stream.getTracks().forEach(track => track.stop());
+        }
+    }
+
+    async initializeCamera() {
         if (this.stream) {
             this.stream.getTracks().forEach(track => track.stop());
         }
 
-        // Try with facingMode first
         try {
+            // Try with facingMode
             const constraints = {
-                video: {
-                    facingMode: { ideal: facingMode }
-                },
+                video: { facingMode: { ideal: this.currentFacingMode } },
                 audio: false
             };
             this.stream = await navigator.mediaDevices.getUserMedia(constraints);
             this.video.srcObject = this.stream;
-            return;
         } catch (error) {
-            console.log('Failed with facingMode, trying simple constraints:', error);
-        }
-
-        // Fallback: Try with just video: true
-        try {
-            const simpleConstraints = { video: true, audio: false };
-            this.stream = await navigator.mediaDevices.getUserMedia(simpleConstraints);
-            this.video.srcObject = this.stream;
-            return;
-        } catch (error) {
-            console.error('All camera initialization attempts failed:', error);
-            throw new Error('Unable to access camera. Please check permissions and ensure you are using HTTPS or localhost.');
+            // Fallback to simple video
+            try {
+                const simpleConstraints = { video: true, audio: false };
+                this.stream = await navigator.mediaDevices.getUserMedia(simpleConstraints);
+                this.video.srcObject = this.stream;
+            } catch (err) {
+                throw new Error('Camera access denied or unavailable');
+            }
         }
     }
 
-    async switchCamera() {
+    async switchCameraFacing() {
         this.currentFacingMode = this.currentFacingMode === 'environment' ? 'user' : 'environment';
         try {
-            await this.initializeCamera(this.currentFacingMode);
+            await this.initializeCamera();
         } catch (error) {
-            this.showError('Could not switch camera: ' + error.message);
-            // Switch back to previous mode
-            this.currentFacingMode = this.currentFacingMode === 'environment' ? 'user' : 'environment';
+            this.showError('Could not switch camera');
         }
+    }
+
+    handleDragOver(e) {
+        e.preventDefault();
+        this.uploadArea.classList.add('dragover');
+    }
+
+    handleDragLeave(e) {
+        e.preventDefault();
+        this.uploadArea.classList.remove('dragover');
+    }
+
+    handleDrop(e) {
+        e.preventDefault();
+        this.uploadArea.classList.remove('dragover');
+
+        const files = e.dataTransfer.files;
+        if (files.length > 0) {
+            this.processFile(files[0]);
+        }
+    }
+
+    handleFileSelect(e) {
+        const file = e.target.files[0];
+        if (file) {
+            this.processFile(file);
+        }
+    }
+
+    processFile(file) {
+        if (!file.type.startsWith('image/')) {
+            this.showError('Please select an image file (JPG, PNG, or WEBP)');
+            return;
+        }
+
+        const reader = new FileReader();
+        reader.onload = (e) => {
+            fetch(e.target.result)
+                .then(res => res.blob())
+                .then(blob => {
+                    this.originalImageBlob = blob;
+                    this.processImage(blob);
+                });
+        };
+        reader.readAsDataURL(file);
     }
 
     capturePhoto() {
-        // Set canvas dimensions to match video
         this.canvas.width = this.video.videoWidth;
         this.canvas.height = this.video.videoHeight;
-
-        // Draw video frame to canvas
         this.ctx.drawImage(this.video, 0, 0);
 
-        // Convert canvas to blob and process
         this.canvas.toBlob((blob) => {
+            this.originalImageBlob = blob;
+            if (this.stream) {
+                this.stream.getTracks().forEach(track => track.stop());
+            }
             this.processImage(blob);
         }, 'image/png');
     }
 
     async processImage(imageBlob) {
-        this.showLoading();
+        this.setActiveStep(3);
+        this.showSection(this.loadingSection);
 
         try {
-            // Convert blob to image for processing
-            const imageBitmap = await createImageBitmap(imageBlob);
+            // Convert blob to data URL
+            const dataURL = await this.blobToDataURL(imageBlob);
 
-            // Create a temporary canvas for the input image
-            const tempCanvas = document.createElement('canvas');
-            tempCanvas.width = imageBitmap.width;
-            tempCanvas.height = imageBitmap.height;
-            const tempCtx = tempCanvas.getContext('2d');
-            tempCtx.drawImage(imageBitmap, 0, 0);
-
-            // Remove background using the library
-            const blob = await removeBackground(tempCanvas.toDataURL());
+            // Remove background
+            const resultBlob = await removeBackground(dataURL);
 
             // Add white background
-            await this.addWhiteBackground(blob);
+            await this.addWhiteBackground(resultBlob);
 
         } catch (error) {
-            console.error('Error processing image:', error);
-            this.showError('Failed to process image: ' + error.message);
+            console.error('Processing error:', error);
+            this.showError('Failed to process image. ' + error.message);
         }
     }
 
+    blobToDataURL(blob) {
+        return new Promise((resolve, reject) => {
+            const reader = new FileReader();
+            reader.onload = () => resolve(reader.result);
+            reader.onerror = reject;
+            reader.readAsDataURL(blob);
+        });
+    }
+
     async addWhiteBackground(foregroundBlob) {
-        // Create image from blob
         const img = new Image();
         const url = URL.createObjectURL(foregroundBlob);
 
         img.onload = () => {
-            // Create canvas for final composition
-            const compositeCanvas = document.createElement('canvas');
-            compositeCanvas.width = img.width;
-            compositeCanvas.height = img.height;
-            const compositeCtx = compositeCanvas.getContext('2d');
+            const canvas = document.createElement('canvas');
+            canvas.width = img.width;
+            canvas.height = img.height;
+            const ctx = canvas.getContext('2d');
 
-            // Fill with white background
-            compositeCtx.fillStyle = '#FFFFFF';
-            compositeCtx.fillRect(0, 0, compositeCanvas.width, compositeCanvas.height);
+            // White background
+            ctx.fillStyle = '#FFFFFF';
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
 
-            // Draw foreground image
-            compositeCtx.drawImage(img, 0, 0);
+            // Draw foreground
+            ctx.drawImage(img, 0, 0);
 
-            // Convert to blob and display
-            compositeCanvas.toBlob((finalBlob) => {
+            canvas.toBlob((finalBlob) => {
                 this.processedImageBlob = finalBlob;
-                this.displayResult(finalBlob);
+                this.displayResult();
                 URL.revokeObjectURL(url);
             }, 'image/png');
         };
@@ -174,174 +282,147 @@ class BackgroundRemovalApp {
         img.src = url;
     }
 
-    displayResult(blob) {
-        const url = URL.createObjectURL(blob);
-        this.resultImage.src = url;
+    async displayResult() {
+        this.setActiveStep(4);
+        this.showSection(this.resultSection);
 
-        this.loadingState.style.display = 'none';
-        this.resultContainer.style.display = 'block';
+        // Show before and after
+        this.beforeImage.src = URL.createObjectURL(this.originalImageBlob);
+        this.afterImage.src = URL.createObjectURL(this.processedImageBlob);
 
-        // Auto-save to Downloads folder
-        this.autoSaveImage(blob);
-
-        // Clean up old URLs
-        this.resultImage.onload = () => {
-            URL.revokeObjectURL(url);
-        };
+        // Auto-download
+        this.autoDownloadImage();
     }
 
-    autoSaveImage(blob) {
-        const url = URL.createObjectURL(blob);
+    autoDownloadImage() {
+        const url = URL.createObjectURL(this.processedImageBlob);
         const a = document.createElement('a');
         a.href = url;
-        a.download = `product-shot-${Date.now()}.png`;
+        a.download = `bg-removed-${Date.now()}.png`;
         a.style.display = 'none';
         document.body.appendChild(a);
         a.click();
 
-        // Clean up after a short delay
         setTimeout(() => {
             document.body.removeChild(a);
             URL.revokeObjectURL(url);
         }, 100);
-
-        console.log('Image auto-saved to Downloads folder');
     }
 
     downloadImage() {
+        this.autoDownloadImage();
+    }
+
+    async applyQuickEdit(action) {
         if (!this.processedImageBlob) return;
 
-        const url = URL.createObjectURL(this.processedImageBlob);
-        const a = document.createElement('a');
-        a.href = url;
-        a.download = `product-shot-${Date.now()}.png`;
-        document.body.appendChild(a);
-        a.click();
-        document.body.removeChild(a);
-        URL.revokeObjectURL(url);
-    }
-
-    retake() {
-        this.resultContainer.style.display = 'none';
-        this.processedImageBlob = null;
-    }
-
-    showLoading() {
-        this.loadingState.style.display = 'block';
-        this.resultContainer.style.display = 'none';
-        this.errorState.style.display = 'none';
-    }
-
-    showError(message) {
-        this.errorMessage.textContent = message;
-        this.errorState.style.display = 'block';
-        this.loadingState.style.display = 'none';
-        this.resultContainer.style.display = 'none';
-    }
-
-    hideError() {
-        this.errorState.style.display = 'none';
-    }
-
-    async applyInstructions() {
-        const instructions = this.instructionInput.value.trim().toLowerCase();
-
-        if (!this.processedImageBlob || !instructions) {
-            return;
-        }
-
-        this.showLoading();
+        this.setActiveStep(3);
+        this.showSection(this.loadingSection);
 
         try {
-            // Create image from current processed blob
-            const img = new Image();
-            const url = URL.createObjectURL(this.processedImageBlob);
+            const img = await this.loadImage(this.processedImageBlob);
+            const canvas = document.createElement('canvas');
+            canvas.width = img.width;
+            canvas.height = img.height;
+            const ctx = canvas.getContext('2d');
 
-            img.onload = async () => {
-                const canvas = document.createElement('canvas');
-                canvas.width = img.width;
-                canvas.height = img.height;
-                const ctx = canvas.getContext('2d');
+            ctx.drawImage(img, 0, 0);
 
-                // Apply modifications based on instructions
-                await this.processInstructions(ctx, img, instructions);
+            // Apply the edit
+            switch(action) {
+                case 'brighter':
+                    this.adjustBrightness(ctx, 1.3);
+                    break;
+                case 'darker':
+                    this.adjustBrightness(ctx, 0.7);
+                    break;
+                case 'shadow':
+                    await this.addShadowEffect(ctx, img);
+                    break;
+                case 'border':
+                    this.addBorder(ctx);
+                    break;
+            }
 
-                // Convert to blob and display
-                canvas.toBlob((modifiedBlob) => {
-                    this.processedImageBlob = modifiedBlob;
-                    this.displayResult(modifiedBlob);
-                    URL.revokeObjectURL(url);
-                    this.instructionInput.value = '';
-                    this.applyInstructionBtn.disabled = true;
-                }, 'image/png');
-            };
-
-            img.onerror = () => {
-                URL.revokeObjectURL(url);
-                this.showError('Failed to apply instructions');
-            };
-
-            img.src = url;
+            canvas.toBlob((blob) => {
+                this.processedImageBlob = blob;
+                this.displayResult();
+            }, 'image/png');
 
         } catch (error) {
-            console.error('Error applying instructions:', error);
-            this.showError('Failed to apply instructions: ' + error.message);
+            this.showError('Failed to apply edit');
         }
     }
 
-    async processInstructions(ctx, img, instructions) {
-        // Draw base image
-        ctx.drawImage(img, 0, 0);
+    async applyCustomInstructions() {
+        const instructions = this.instructionInput.value.trim().toLowerCase();
+        if (!instructions || !this.processedImageBlob) return;
 
-        // Parse and apply various instruction types
-        if (instructions.includes('bright') || instructions.includes('lighter')) {
-            this.adjustBrightness(ctx, 1.2);
-        }
+        this.setActiveStep(3);
+        this.showSection(this.loadingSection);
 
-        if (instructions.includes('dark') || instructions.includes('dim')) {
-            this.adjustBrightness(ctx, 0.8);
-        }
+        try {
+            const img = await this.loadImage(this.processedImageBlob);
+            const canvas = document.createElement('canvas');
+            canvas.width = img.width;
+            canvas.height = img.height;
+            const ctx = canvas.getContext('2d');
 
-        if (instructions.includes('contrast')) {
-            this.adjustContrast(ctx);
-        }
+            ctx.drawImage(img, 0, 0);
 
-        if (instructions.includes('blur')) {
-            ctx.filter = 'blur(2px)';
-            ctx.drawImage(ctx.canvas, 0, 0);
-            ctx.filter = 'none';
-        }
+            // Parse and apply instructions
+            if (instructions.includes('bright')) this.adjustBrightness(ctx, 1.3);
+            if (instructions.includes('dark') || instructions.includes('dim')) this.adjustBrightness(ctx, 0.7);
+            if (instructions.includes('contrast')) this.adjustContrast(ctx);
+            if (instructions.includes('blur')) {
+                ctx.filter = 'blur(2px)';
+                ctx.drawImage(ctx.canvas, 0, 0);
+                ctx.filter = 'none';
+            }
+            if (instructions.includes('sharpen')) {
+                ctx.filter = 'contrast(1.2) saturate(1.1)';
+                ctx.drawImage(ctx.canvas, 0, 0);
+                ctx.filter = 'none';
+            }
+            if (instructions.includes('grayscale') || instructions.includes('black and white')) {
+                ctx.filter = 'grayscale(100%)';
+                ctx.drawImage(ctx.canvas, 0, 0);
+                ctx.filter = 'none';
+            }
+            if (instructions.includes('sepia')) {
+                ctx.filter = 'sepia(100%)';
+                ctx.drawImage(ctx.canvas, 0, 0);
+                ctx.filter = 'none';
+            }
+            if (instructions.includes('shadow')) await this.addShadowEffect(ctx, img);
+            if (instructions.includes('border')) this.addBorder(ctx);
+            if (instructions.includes('crop') && instructions.includes('square')) this.cropToSquare(ctx, img);
 
-        if (instructions.includes('sharpen')) {
-            ctx.filter = 'contrast(1.2) saturate(1.1)';
-            ctx.drawImage(ctx.canvas, 0, 0);
-            ctx.filter = 'none';
-        }
+            canvas.toBlob((blob) => {
+                this.processedImageBlob = blob;
+                this.instructionInput.value = '';
+                this.displayResult();
+            }, 'image/png');
 
-        if (instructions.includes('grayscale') || instructions.includes('black and white')) {
-            ctx.filter = 'grayscale(100%)';
-            ctx.drawImage(ctx.canvas, 0, 0);
-            ctx.filter = 'none';
+        } catch (error) {
+            this.showError('Failed to apply instructions');
         }
+    }
 
-        if (instructions.includes('sepia')) {
-            ctx.filter = 'sepia(100%)';
-            ctx.drawImage(ctx.canvas, 0, 0);
-            ctx.filter = 'none';
-        }
-
-        if (instructions.includes('shadow')) {
-            this.addShadow(ctx, img);
-        }
-
-        if (instructions.includes('border')) {
-            this.addBorder(ctx);
-        }
-
-        // Size adjustments
-        if (instructions.includes('crop') && instructions.includes('square')) {
-            this.cropToSquare(ctx, img);
-        }
+    loadImage(blob) {
+        return new Promise((resolve, reject) => {
+            const img = new Image();
+            const url = URL.createObjectURL(blob);
+            img.onload = () => {
+                URL.revokeObjectURL(url);
+                resolve(img);
+            };
+            img.onerror = () => {
+                URL.revokeObjectURL(url);
+                reject(new Error('Failed to load image'));
+            };
+            img.src = url;
+        });
     }
 
     adjustBrightness(ctx, factor) {
@@ -349,9 +430,9 @@ class BackgroundRemovalApp {
         const data = imageData.data;
 
         for (let i = 0; i < data.length; i += 4) {
-            data[i] = Math.min(255, data[i] * factor);     // R
-            data[i + 1] = Math.min(255, data[i + 1] * factor); // G
-            data[i + 2] = Math.min(255, data[i + 2] * factor); // B
+            data[i] = Math.min(255, data[i] * factor);
+            data[i + 1] = Math.min(255, data[i + 1] * factor);
+            data[i + 2] = Math.min(255, data[i + 2] * factor);
         }
 
         ctx.putImageData(imageData, 0, 0);
@@ -372,22 +453,18 @@ class BackgroundRemovalApp {
         ctx.putImageData(imageData, 0, 0);
     }
 
-    addShadow(ctx, img) {
-        // Create shadow effect
+    async addShadowEffect(ctx, img) {
         ctx.clearRect(0, 0, ctx.canvas.width, ctx.canvas.height);
         ctx.fillStyle = '#FFFFFF';
         ctx.fillRect(0, 0, ctx.canvas.width, ctx.canvas.height);
 
-        // Draw shadow
         ctx.shadowColor = 'rgba(0, 0, 0, 0.3)';
         ctx.shadowBlur = 20;
         ctx.shadowOffsetX = 5;
         ctx.shadowOffsetY = 5;
 
-        // Draw image with shadow
         ctx.drawImage(img, 0, 0);
 
-        // Reset shadow
         ctx.shadowColor = 'transparent';
         ctx.shadowBlur = 0;
         ctx.shadowOffsetX = 0;
@@ -411,9 +488,25 @@ class BackgroundRemovalApp {
         ctx.fillRect(0, 0, size, size);
         ctx.drawImage(img, x, y, size, size, 0, 0, size, size);
     }
+
+    showError(message) {
+        this.setActiveStep(1);
+        this.showSection(this.errorSection);
+        this.errorMessage.textContent = message;
+    }
+
+    startOver() {
+        this.originalImageBlob = null;
+        this.processedImageBlob = null;
+        if (this.stream) {
+            this.stream.getTracks().forEach(track => track.stop());
+        }
+        this.setActiveStep(1);
+        this.showSection(this.methodSelection);
+    }
 }
 
-// Initialize the app when DOM is loaded
+// Initialize when page loads
 document.addEventListener('DOMContentLoaded', () => {
-    new BackgroundRemovalApp();
+    new SimpleBackgroundRemover();
 });
